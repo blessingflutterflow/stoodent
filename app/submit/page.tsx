@@ -102,10 +102,11 @@ export default function SubmitPage() {
     setLoading(true);
     setApiError("");
 
+    const digits = phone.replace(/\D/g, "").replace(/^0/, "");
     const res = await fetch("/api/auth/send-otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: `+27${phone.replace(/\D/g, "")}` }),
+      body: JSON.stringify({ phone: `+27${digits}` }),
     });
     const data = await res.json();
     setLoading(false);
@@ -132,7 +133,7 @@ export default function SubmitPage() {
     const verifyRes = await fetch("/api/auth/verify-otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: `+27${phone.replace(/\D/g, "")}`, code, name: name.trim() }),
+      body: JSON.stringify({ phone: `+27${phone.replace(/\D/g, "").replace(/^0/, "")}`, code, name: name.trim() }),
     });
     const verifyData = await verifyRes.json();
 
@@ -320,7 +321,7 @@ export default function SubmitPage() {
                   {authStep === "phone" ? "Verify with WhatsApp" : authStep === "otp" ? "Enter your code" : "Creating your session…"}
                 </p>
                 <p style={{ fontSize: 13, color: "#696969", margin: 0, fontWeight: 450 }}>
-                  {authStep === "phone" ? "We'll send a 6-digit code via SMS" : authStep === "otp" ? `Sent via SMS to +27 ${phone}` : "Almost there, please wait"}
+                  {authStep === "phone" ? "We'll send a 6-digit code via SMS" : authStep === "otp" ? `Sent via SMS to +27 ${phone.replace(/\D/g, "").replace(/^0/, "")}` : "Almost there, please wait"}
                 </p>
               </div>
             </div>
