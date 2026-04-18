@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
-import { twilioClient, WHATSAPP_FROM, TUTOR_WHATSAPP } from "@/lib/twilio";
+import { getTwilioClient, WHATSAPP_FROM, TUTOR_WHATSAPP } from "@/lib/twilio";
 import { sessionOptions, SessionData } from "@/lib/session";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { getIronSession } from "iron-session";
@@ -43,9 +43,9 @@ export async function POST(req: NextRequest) {
     });
 
     // Notify tutor via WhatsApp
-    await twilioClient.messages.create({
-      from: WHATSAPP_FROM,
-      to: TUTOR_WHATSAPP,
+    await getTwilioClient().messages.create({
+      from: WHATSAPP_FROM(),
+      to: TUTOR_WHATSAPP(),
       body:
         `📚 *New assignment submitted!*\n\n` +
         `👤 Student: ${session.name}\n` +

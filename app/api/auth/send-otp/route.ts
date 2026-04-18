@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
-import { twilioClient, normalizePhone } from "@/lib/twilio";
+import { getTwilioClient, normalizePhone } from "@/lib/twilio";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 function generateOTP(): string {
@@ -29,8 +29,8 @@ export async function POST(req: NextRequest) {
     });
 
     // Send via SMS
-    await twilioClient.messages.create({
-      from: process.env.TWILIO_PHONE_NUMBER!,
+    await getTwilioClient().messages.create({
+      from: (process.env.TWILIO_PHONE_NUMBER ?? "").trim(),
       to: normalized,
       body: `Your Stoodent code is: ${otp}\n\nExpires in 5 minutes. Do not share this code.`,
     });

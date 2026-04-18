@@ -4,9 +4,12 @@ import { getIronSession } from "iron-session";
 import { cookies } from "next/headers";
 import { sessionOptions, SessionData } from "@/lib/session";
 
-const liveblocks = new Liveblocks({
-  secret: process.env.LIVEBLOCKS_SECRET_KEY!,
-});
+// Lazy — only instantiated at request time so build doesn't validate the key
+function getLiveblocks() {
+  return new Liveblocks({
+    secret: (process.env.LIVEBLOCKS_SECRET_KEY ?? "").trim(),
+  });
+}
 
 // Avatar colors — cycled for guests
 const GUEST_COLORS = ["#F37338", "#3860BE", "#a855f7", "#22c55e", "#f59e0b"];
@@ -23,6 +26,7 @@ export async function POST(request: NextRequest) {
     ? "#141413"
     : GUEST_COLORS[Math.abs(userId.charCodeAt(0)) % GUEST_COLORS.length];
 
+  const liveblocks = getLiveblocks();
   const liveblocksSession = liveblocks.prepareSession(userId, {
     userInfo: {
       name,
