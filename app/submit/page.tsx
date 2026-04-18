@@ -112,10 +112,11 @@ export default function SubmitPage() {
     setLoading(false);
 
     if (!res.ok) {
-      setApiError(data.error ?? "Something went wrong.");
+      setApiError((data.detail ?? data.error) ?? "Something went wrong.");
       return;
     }
 
+    console.log("[send-otp response]", data);
     setOtp(["", "", "", "", "", ""]);
     setAuthStep("otp");
   }

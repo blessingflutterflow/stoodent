@@ -29,13 +29,14 @@ export async function POST(req: NextRequest) {
     });
 
     // Send via SMS
-    await getTwilioClient().messages.create({
+    const msg = await getTwilioClient().messages.create({
       from: (process.env.TWILIO_PHONE_NUMBER ?? "").trim(),
       to: normalized,
       body: `Your Stoodent code is: ${otp}\n\nExpires in 5 minutes. Do not share this code.`,
     });
 
-    return NextResponse.json({ success: true });
+    console.log("[send-otp] Twilio SID:", msg.sid, "status:", msg.status, "to:", normalized, "from:", (process.env.TWILIO_PHONE_NUMBER ?? "").trim());
+    return NextResponse.json({ success: true, sid: msg.sid, status: msg.status });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[send-otp]", msg);
