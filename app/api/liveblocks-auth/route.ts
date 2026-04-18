@@ -16,13 +16,17 @@ const GUEST_COLORS = ["#F37338", "#3860BE", "#a855f7", "#22c55e", "#f59e0b"];
 
 export async function POST(request: NextRequest) {
   const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
-  const { room } = await request.json();
+  const { room, isTutor } = await request.json();
 
-  const isAuthenticated = !!session.isLoggedIn;
+  // isTutor flag sent by client when ?tutor=1 is in the URL
+  const isTutorSession = isTutor === true;
 
-  const userId = session.userId ?? `guest-${Math.random().toString(36).slice(2, 8)}`;
-  const name = session.name ?? "Guest";
-  const color = session.role === "tutor"
+  const userId = isTutorSession
+    ? "tutor-main"
+    : (session.userId ?? `guest-${Math.random().toString(36).slice(2, 8)}`);
+
+  const name = isTutorSession ? "Tutor" : (session.name ?? "Student");
+  const color = isTutorSession
     ? "#141413"
     : GUEST_COLORS[Math.abs(userId.charCodeAt(0)) % GUEST_COLORS.length];
 
@@ -31,8 +35,7 @@ export async function POST(request: NextRequest) {
     userInfo: {
       name,
       color,
-      role: session.role ?? "student",
-      isAuthenticated,
+      role: isTutorSession ? "tutor" : (session.role ?? "student"),
     },
   });
 

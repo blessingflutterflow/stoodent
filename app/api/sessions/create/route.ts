@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
 
     const sessionId = generateSessionId();
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-    const sessionUrl = `${appUrl}/session/${sessionId}`;
+    const sessionUrl = `${appUrl}/session/${sessionId}?tutor=1`;
 
     // Save session to Firestore
     await setDoc(doc(db, "sessions", sessionId), {

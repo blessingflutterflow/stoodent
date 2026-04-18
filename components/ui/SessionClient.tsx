@@ -2,6 +2,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { LiveblocksProvider, RoomProvider, useOthers, useSelf, ClientSideSuspense } from "@liveblocks/react";
@@ -325,8 +326,20 @@ export default function SessionClient({ id }: { id: string }) {
     );
   }
 
+  const searchParams = useSearchParams();
+  const isTutor = searchParams.get("tutor") === "1";
+
   return (
-    <LiveblocksProvider authEndpoint="/api/liveblocks-auth">
+    <LiveblocksProvider
+      authEndpoint={async (room) => {
+        const res = await fetch("/api/liveblocks-auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room, isTutor }),
+        });
+        return res.json();
+      }}
+    >
       <RoomProvider id={`session-${id}`} initialPresence={{}}>
         <SessionWorkspace session={session} />
       </RoomProvider>
