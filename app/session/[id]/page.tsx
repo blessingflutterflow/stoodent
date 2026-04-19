@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import SessionClient from "@/components/ui/SessionClient";
 
 export default async function SessionPage({
@@ -6,5 +7,9 @@ export default async function SessionPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <SessionClient id={id} />;
+  return (
+    <Suspense fallback={null}>
+      <SessionClient id={id} />
+    </Suspense>
+  );
 }
