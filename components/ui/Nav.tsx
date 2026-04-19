@@ -32,7 +32,7 @@ export default function Nav() {
         <div className="hidden md:flex items-center gap-8">
           {[
             { label: "How it works", href: "/#how" },
-            { label: "Sessions", href: "/dashboard" },
+            { label: "Assignments", href: "/my-sessions" },
           ].map((l) => (
             <Link
               key={l.href}

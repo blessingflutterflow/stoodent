@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    const { module, moduleCode, assignmentText } = await req.json();
+    const { module, moduleCode, assignmentText, fileUrl } = await req.json();
 
     if (!module || !moduleCode) {
       return NextResponse.json({ error: "Module name and code are required" }, { status: 400 });
@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       module,
       moduleCode,
       assignmentText: assignmentText ?? "",
+      fileUrl: fileUrl ?? "",
       status: "waiting",
       tutorJoined: false,
       createdAt: serverTimestamp(),

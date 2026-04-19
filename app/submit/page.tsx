@@ -1,23 +1,15 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { app } from "@/lib/firebase";
 import {
   ArrowLeft, ArrowRight, FileText, Hash,
-  Image as ImageIcon, MessageCircle, Phone,
+  Image as ImageIcon, LogOut, Phone,
   ShieldCheck, Type, UploadCloud, X,
 } from "lucide-react";
 
-type InputMode = "type" | "upload";
-type AuthStep = "idle" | "phone" | "otp" | "creating";
-
-const MODULES = [
-  "Mathematics", "Physics", "Chemistry", "Biology",
-  "Computer Science", "Accounting", "Economics",
-  "English Literature", "History", "Geography",
-];
-
-// ─── WhatsApp icon SVG ────────────────────────────────────
 function WhatsAppIcon({ size = 20 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -26,12 +18,13 @@ function WhatsAppIcon({ size = 20 }: { size?: number }) {
   );
 }
 
+type AuthStep = "idle" | "phone" | "otp" | "creating";
+
 export default function SubmitPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Form state
-  const [mode, setMode] = useState<InputMode>("type");
   const [assignmentText, setAssignmentText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -46,7 +39,18 @@ export default function SubmitPage() {
   const [apiError, setApiError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ── File helpers ──────────────────────────────────────
+  // Persistent session
+  const [loggedInUser, setLoggedInUser] = useState<{ name: string; phone: string } | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => { if (d.isLoggedIn) setLoggedInUser({ name: d.name, phone: d.phone }); })
+      .finally(() => setSessionChecked(true));
+  }, []);
+
+  // ── File helpers ───────────────────────────────────────
   function handleFileDrop(e: React.DragEvent) {
     e.preventDefault();
     setFileDragOver(false);
@@ -69,9 +73,9 @@ export default function SubmitPage() {
   const canSubmit =
     moduleName.trim() &&
     moduleCode.trim() &&
-    (mode === "type" ? assignmentText.trim().length > 20 : !!file);
+    (assignmentText.trim().length > 0 || !!file);
 
-  // ── OTP input helpers ─────────────────────────────────
+  // ── OTP input helpers ──────────────────────────────────
   function handleOtpChange(index: number, value: string) {
     if (!/^\d?$/.test(value)) return;
     const next = [...otp];
@@ -87,21 +91,58 @@ export default function SubmitPage() {
     }
   }
 
-  // ── Step 1: open auth sheet when form is valid ────────
+  // ── Create session (shared) ────────────────────────────
+  async function createSession() {
+    setAuthStep("creating");
+    let fileUrl = "";
+    if (file) {
+      try {
+        const storage = getStorage(app);
+        const storageRef = ref(storage, `assignments/${Date.now()}-${file.name}`);
+        await uploadBytes(storageRef, file);
+        fileUrl = await getDownloadURL(storageRef);
+      } catch {
+        // file upload failure is non-fatal — session still creates
+      }
+    }
+
+    const sessionRes = await fetch("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ module: moduleName, moduleCode, assignmentText, fileUrl }),
+    });
+    const sessionData = await sessionRes.json();
+    if (!sessionRes.ok) {
+      setApiError(sessionData.error ?? "Failed to create session.");
+      setAuthStep("idle");
+      return;
+    }
+    router.push(`/session/${sessionData.sessionId}`);
+  }
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setLoggedInUser(null);
+  }
+
+  // ── Step 1: submit form ────────────────────────────────
   function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setApiError("");
-    setAuthStep("phone");
+    if (loggedInUser) {
+      createSession();
+    } else {
+      setAuthStep("phone");
+    }
   }
 
-  // ── Step 2: send OTP ──────────────────────────────────
+  // ── Step 2: send OTP ───────────────────────────────────
   async function handleSendOtp(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || phone.replace(/\D/g, "").length < 9) return;
     setLoading(true);
     setApiError("");
-
     const digits = phone.replace(/\D/g, "").replace(/^0/, "");
     const res = await fetch("/api/auth/send-otp", {
       method: "POST",
@@ -110,78 +151,44 @@ export default function SubmitPage() {
     });
     const data = await res.json();
     setLoading(false);
-
     if (!res.ok) {
       setApiError((data.detail ?? data.error) ?? "Something went wrong.");
       return;
     }
-
-    console.log("[send-otp response]", data);
     setOtp(["", "", "", "", "", ""]);
     setAuthStep("otp");
   }
 
-  // ── Step 3: verify OTP + create session ──────────────
+  // ── Step 3: verify OTP ─────────────────────────────────
   async function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
     const code = otp.join("");
     if (code.length !== 6) return;
-
     setLoading(true);
     setApiError("");
-
-    // Verify OTP
+    const digits = phone.replace(/\D/g, "").replace(/^0/, "");
     const verifyRes = await fetch("/api/auth/verify-otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: `+27${phone.replace(/\D/g, "").replace(/^0/, "")}`, code, name: name.trim() }),
+      body: JSON.stringify({ phone: `+27${digits}`, code, name: name.trim() }),
     });
     const verifyData = await verifyRes.json();
-
     if (!verifyRes.ok) {
       setLoading(false);
       setApiError(verifyData.error ?? "Verification failed.");
       return;
     }
-
-    // Create session
-    setAuthStep("creating");
-    const sessionRes = await fetch("/api/sessions/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        module: moduleName,
-        moduleCode,
-        assignmentText: mode === "type" ? assignmentText : `[File uploaded: ${file?.name}]`,
-      }),
-    });
-    const sessionData = await sessionRes.json();
     setLoading(false);
-
-    if (!sessionRes.ok) {
-      setApiError(sessionData.error ?? "Failed to create session.");
-      setAuthStep("otp");
-      return;
-    }
-
-    router.push(`/session/${sessionData.sessionId}`);
+    setLoggedInUser({ name: verifyData.name, phone: `+27${digits}` });
+    await createSession();
   }
 
   const isOtpFull = otp.every(Boolean);
 
-  // ── Render ────────────────────────────────────────────
   return (
     <main style={{ background: "#F3F0EE", minHeight: "100vh", padding: "24px" }}>
       <div style={{ marginBottom: 32 }}>
-        <Link
-          href="/"
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            background: "#FFFFFF", borderRadius: 999, padding: "8px 18px",
-            boxShadow: "rgba(0,0,0,0.04) 0px 4px 24px 0px",
-            fontSize: 14, fontWeight: 500, color: "#141413", textDecoration: "none",
-          }}
-        >
+        <Link href="/" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#FFFFFF", borderRadius: 999, padding: "8px 18px", boxShadow: "rgba(0,0,0,0.04) 0px 4px 24px 0px", fontSize: 14, fontWeight: 500, color: "#141413", textDecoration: "none" }}>
           <ArrowLeft size={14} /> Back
         </Link>
       </div>
@@ -196,7 +203,7 @@ export default function SubmitPage() {
             Submit your assignment
           </h1>
           <p style={{ fontSize: 16, fontWeight: 450, color: "#696969", lineHeight: 1.5 }}>
-            Fill in your assignment, then verify with WhatsApp to open your session.
+            Fill in your module and assignment — your tutor will be notified instantly.
           </p>
         </div>
 
@@ -214,13 +221,11 @@ export default function SubmitPage() {
                   <Type size={12} style={{ display: "inline", marginRight: 6 }} />Module name
                 </label>
                 <input
-                  list="modules-list"
                   value={moduleName}
                   onChange={(e) => setModuleName(e.target.value)}
                   placeholder="e.g. Mathematics"
                   style={{ width: "100%", background: "#FFFFFF", border: "1.5px solid", borderColor: moduleName ? "#141413" : "#D1CDC7", borderRadius: 999, padding: "11px 18px", fontSize: 15, fontWeight: 500, color: "#141413", outline: "none", fontFamily: "inherit", transition: "border-color 0.2s" }}
                 />
-                <datalist id="modules-list">{MODULES.map((m) => <option key={m} value={m} />)}</datalist>
               </div>
               <div>
                 <label style={{ fontSize: 13, fontWeight: 700, color: "#141413", display: "block", marginBottom: 8 }}>
@@ -237,37 +242,37 @@ export default function SubmitPage() {
             </div>
           </div>
 
-          {/* Assignment content */}
+          {/* Assignment content — text + optional file, both allowed */}
           <div style={{ background: "#FCFBFA", borderRadius: 32, padding: "28px", border: "1px solid #E8E2DA" }}>
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.56px", textTransform: "uppercase", color: "#696969", marginBottom: 20, display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#D1CDC7", display: "inline-block" }} />
               Assignment content
             </div>
 
-            {/* Toggle */}
-            <div style={{ display: "inline-flex", background: "#F3F0EE", borderRadius: 999, padding: 4, marginBottom: 24 }}>
-              {(["type", "upload"] as InputMode[]).map((m) => (
-                <button key={m} type="button" onClick={() => setMode(m)}
-                  style={{ padding: "8px 22px", borderRadius: 999, border: "none", background: mode === m ? "#141413" : "transparent", color: mode === m ? "#F3F0EE" : "#696969", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 6 }}>
-                  {m === "type" ? <><Type size={13} /> Type it</> : <><UploadCloud size={13} /> Upload file</>}
-                </button>
-              ))}
-            </div>
+            <textarea
+              value={assignmentText}
+              onChange={(e) => setAssignmentText(e.target.value)}
+              placeholder="Describe your assignment or paste the question here… (optional if uploading a file)"
+              rows={6}
+              style={{ width: "100%", background: "#FFFFFF", border: "1.5px solid", borderColor: assignmentText ? "#141413" : "#D1CDC7", borderRadius: 24, padding: "18px 20px", fontSize: 15, fontWeight: 450, color: "#141413", lineHeight: 1.6, outline: "none", resize: "vertical", fontFamily: "inherit", transition: "border-color 0.2s", marginBottom: 16 }}
+            />
 
-            {mode === "type" ? (
-              <textarea value={assignmentText} onChange={(e) => setAssignmentText(e.target.value)}
-                placeholder="Paste or type your assignment question here…" rows={8}
-                style={{ width: "100%", background: "#FFFFFF", border: "1.5px solid", borderColor: assignmentText.length > 20 ? "#141413" : "#D1CDC7", borderRadius: 24, padding: "18px 20px", fontSize: 15, fontWeight: 450, color: "#141413", lineHeight: 1.6, outline: "none", resize: "vertical", fontFamily: "inherit", transition: "border-color 0.2s" }} />
-            ) : !file ? (
-              <div onDragOver={(e) => { e.preventDefault(); setFileDragOver(true); }} onDragLeave={() => setFileDragOver(false)} onDrop={handleFileDrop} onClick={() => fileRef.current?.click()}
-                style={{ border: `2px dashed ${fileDragOver ? "#141413" : "#D1CDC7"}`, borderRadius: 24, padding: "48px 24px", textAlign: "center", cursor: "pointer", background: fileDragOver ? "#F3F0EE" : "#FFFFFF", transition: "all 0.2s" }}>
-                <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-                  <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#F3F0EE", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <UploadCloud size={24} color="#696969" />
+            {/* File upload — always optional */}
+            {!file ? (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setFileDragOver(true); }}
+                onDragLeave={() => setFileDragOver(false)}
+                onDrop={handleFileDrop}
+                onClick={() => fileRef.current?.click()}
+                style={{ border: `2px dashed ${fileDragOver ? "#141413" : "#D1CDC7"}`, borderRadius: 24, padding: "28px 24px", textAlign: "center", cursor: "pointer", background: fileDragOver ? "#F3F0EE" : "#FFFFFF", transition: "all 0.2s" }}
+              >
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#F3F0EE", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <UploadCloud size={20} color="#696969" />
                   </div>
                 </div>
-                <p style={{ fontSize: 15, fontWeight: 500, color: "#141413", marginBottom: 6 }}>Drag & drop or click to upload</p>
-                <p style={{ fontSize: 13, color: "#696969" }}>PDF, Word (.docx), or images — max 20MB</p>
+                <p style={{ fontSize: 14, fontWeight: 500, color: "#141413", marginBottom: 4 }}>Attach a file <span style={{ fontWeight: 450, color: "#696969" }}>(optional)</span></p>
+                <p style={{ fontSize: 12, color: "#696969" }}>PDF, Word, or image — max 20MB</p>
                 <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" onChange={handleFileSelect} style={{ display: "none" }} />
               </div>
             ) : (
@@ -286,93 +291,96 @@ export default function SubmitPage() {
             )}
           </div>
 
+          {/* Logged-in banner */}
+          {sessionChecked && loggedInUser && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#FCFBFA", border: "1.5px solid #E8E2DA", borderRadius: 20, padding: "14px 20px" }}>
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 700, color: "#141413", margin: 0 }}>Signed in as {loggedInUser.name}</p>
+                <p style={{ fontSize: 12, color: "#696969", margin: 0 }}>{loggedInUser.phone}</p>
+              </div>
+              <button type="button" onClick={handleLogout} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", fontSize: 13, color: "#696969", cursor: "pointer", fontFamily: "inherit" }}>
+                <LogOut size={13} /> Switch
+              </button>
+            </div>
+          )}
+
+          {/* Error */}
+          {apiError && (
+            <div style={{ background: "#FFF5F0", border: "1px solid #F37338", borderRadius: 16, padding: "12px 16px", fontSize: 14, color: "#CF4500" }}>
+              {apiError}
+            </div>
+          )}
+
           {/* Submit */}
-          <button type="submit" disabled={!canSubmit}
+          <button type="submit" disabled={!canSubmit || authStep === "creating"}
             style={{ width: "100%", background: canSubmit ? "#141413" : "#D1CDC7", color: "#F3F0EE", border: "none", borderRadius: 20, padding: "16px 0", fontSize: 17, fontWeight: 500, letterSpacing: -0.34, cursor: canSubmit ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit", transition: "background 0.2s" }}>
-            Continue to WhatsApp verification <ArrowRight size={18} />
+            {authStep === "creating"
+              ? "Creating your session…"
+              : loggedInUser
+              ? <><ArrowRight size={18} /> Submit assignment</>
+              : <>Continue to verification <ArrowRight size={18} /></>}
           </button>
 
-          <p style={{ textAlign: "center", fontSize: 13, color: "#696969", marginTop: -8 }}>
-            You&apos;ll verify with WhatsApp OTP before the session opens.
-          </p>
+          {!loggedInUser && sessionChecked && (
+            <p style={{ textAlign: "center", fontSize: 13, color: "#696969", marginTop: -8 }}>
+              You&apos;ll verify with SMS OTP before the session opens.
+            </p>
+          )}
         </form>
       </div>
 
-      {/* ── WhatsApp Auth Bottom Sheet ─────────────────── */}
-      {authStep !== "idle" && (
+      {/* ── Auth Bottom Sheet ──────────────────────────────── */}
+      {authStep !== "idle" && authStep !== "creating" && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-          {/* Backdrop */}
-          <div
-            onClick={() => { if (authStep !== "creating") { setAuthStep("idle"); setApiError(""); } }}
-            style={{ position: "absolute", inset: 0, background: "rgba(20,20,19,0.55)", backdropFilter: "blur(4px)" }}
-          />
-
-          {/* Sheet */}
+          <div onClick={() => { setAuthStep("idle"); setApiError(""); }} style={{ position: "absolute", inset: 0, background: "rgba(20,20,19,0.55)", backdropFilter: "blur(4px)" }} />
           <div style={{ position: "relative", background: "#FCFBFA", borderRadius: "40px 40px 0 0", padding: "32px 32px 56px", maxWidth: 520, width: "100%", margin: "0 auto", zIndex: 1 }}>
-            {/* Handle */}
             <div style={{ width: 40, height: 4, background: "#D1CDC7", borderRadius: 999, margin: "0 auto 32px" }} />
 
-            {/* WhatsApp badge */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
               <div style={{ width: 44, height: 44, borderRadius: "50%", background: "#25D366", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <WhatsAppIcon size={22} />
               </div>
               <div>
                 <p style={{ fontSize: 16, fontWeight: 600, color: "#141413", margin: 0, letterSpacing: -0.32 }}>
-                  {authStep === "phone" ? "Verify with WhatsApp" : authStep === "otp" ? "Enter your code" : "Creating your session…"}
+                  {authStep === "phone" ? "Verify your number" : "Enter your code"}
                 </p>
                 <p style={{ fontSize: 13, color: "#696969", margin: 0, fontWeight: 450 }}>
-                  {authStep === "phone" ? "We'll send a 6-digit code via SMS" : authStep === "otp" ? `Sent via SMS to +27 ${phone.replace(/\D/g, "").replace(/^0/, "")}` : "Almost there, please wait"}
+                  {authStep === "phone" ? "We'll send a 6-digit code via SMS" : `Sent via SMS to +27 ${phone.replace(/\D/g, "").replace(/^0/, "")}`}
                 </p>
               </div>
             </div>
 
-            {/* Error */}
             {apiError && (
-              <div style={{ background: "#FFF5F0", border: "1px solid #F37338", borderRadius: 16, padding: "12px 16px", marginBottom: 20, fontSize: 14, color: "#CF4500", fontWeight: 450 }}>
+              <div style={{ background: "#FFF5F0", border: "1px solid #F37338", borderRadius: 16, padding: "12px 16px", marginBottom: 20, fontSize: 14, color: "#CF4500" }}>
                 {apiError}
               </div>
             )}
 
-            {/* ── Phone step ── */}
             {authStep === "phone" && (
               <form onSubmit={handleSendOtp} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {/* Name */}
                 <div>
                   <label style={{ fontSize: 13, fontWeight: 700, color: "#141413", display: "block", marginBottom: 8 }}>Your first name</label>
-                  <input
-                    value={name} onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Thabo"
-                    autoFocus
-                    style={{ width: "100%", background: "#FFFFFF", border: "1.5px solid", borderColor: name ? "#141413" : "#D1CDC7", borderRadius: 999, padding: "12px 20px", fontSize: 15, fontWeight: 500, color: "#141413", outline: "none", fontFamily: "inherit" }}
-                  />
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Thabo" autoFocus
+                    style={{ width: "100%", background: "#FFFFFF", border: "1.5px solid", borderColor: name ? "#141413" : "#D1CDC7", borderRadius: 999, padding: "12px 20px", fontSize: 15, fontWeight: 500, color: "#141413", outline: "none", fontFamily: "inherit" }} />
                 </div>
-
-                {/* Phone */}
                 <div>
-                  <label style={{ fontSize: 13, fontWeight: 700, color: "#141413", display: "block", marginBottom: 8 }}>WhatsApp number</label>
+                  <label style={{ fontSize: 13, fontWeight: 700, color: "#141413", display: "block", marginBottom: 8 }}>Phone number</label>
                   <div style={{ display: "flex", alignItems: "center", background: "#FFFFFF", border: "1.5px solid", borderColor: phone.replace(/\D/g, "").length >= 9 ? "#141413" : "#D1CDC7", borderRadius: 999, overflow: "hidden" }}>
                     <div style={{ padding: "12px 16px 12px 20px", borderRight: "1.5px solid #E8E2DA", display: "flex", alignItems: "center", gap: 6, color: "#696969", fontSize: 15, fontWeight: 500, whiteSpace: "nowrap" }}>
                       <Phone size={14} /> +27
                     </div>
-                    <input
-                      type="tel" value={phone}
-                      onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                      placeholder="82 123 4567" maxLength={10}
-                      style={{ flex: 1, border: "none", outline: "none", background: "transparent", padding: "12px 20px 12px 14px", fontSize: 16, fontWeight: 500, color: "#141413", fontFamily: "inherit" }}
-                    />
+                    <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))} placeholder="82 123 4567" maxLength={10}
+                      style={{ flex: 1, border: "none", outline: "none", background: "transparent", padding: "12px 20px 12px 14px", fontSize: 16, fontWeight: 500, color: "#141413", fontFamily: "inherit" }} />
                   </div>
                 </div>
-
                 <button type="submit" disabled={loading || !name.trim() || phone.replace(/\D/g, "").length < 9}
-                  style={{ width: "100%", background: (!loading && name.trim() && phone.replace(/\D/g, "").length >= 9) ? "#25D366" : "#D1CDC7", color: "#FFFFFF", border: "none", borderRadius: 20, padding: "14px 0", fontSize: 16, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit", transition: "background 0.2s" }}>
-                  {loading ? "Sending…" : <><WhatsAppIcon size={18} /> Send code on WhatsApp</>}
+                  style={{ width: "100%", background: (!loading && name.trim() && phone.replace(/\D/g, "").length >= 9) ? "#25D366" : "#D1CDC7", color: "#FFFFFF", border: "none", borderRadius: 20, padding: "14px 0", fontSize: 16, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
+                  {loading ? "Sending…" : <><WhatsAppIcon size={18} /> Send code</>}
                 </button>
               </form>
             )}
 
-            {/* ── OTP step ── */}
-            {(authStep === "otp" || authStep === "creating") && (
+            {authStep === "otp" && (
               <form onSubmit={handleVerifyOtp} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
                   {otp.map((digit, i) => (
@@ -383,20 +391,17 @@ export default function SubmitPage() {
                       autoFocus={i === 0} />
                   ))}
                 </div>
-
-                <button type="submit" disabled={!isOtpFull || loading || authStep === "creating"}
-                  style={{ width: "100%", background: (isOtpFull && authStep !== "creating") ? "#141413" : "#D1CDC7", color: "#F3F0EE", border: "none", borderRadius: 20, padding: "14px 0", fontSize: 16, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
-                  {authStep === "creating" ? "Creating your session…" : <><ShieldCheck size={16} /> Verify &amp; open session</>}
+                <button type="submit" disabled={!isOtpFull || loading}
+                  style={{ width: "100%", background: isOtpFull ? "#141413" : "#D1CDC7", color: "#F3F0EE", border: "none", borderRadius: 20, padding: "14px 0", fontSize: 16, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}>
+                  {loading ? "Verifying…" : <><ShieldCheck size={16} /> Verify &amp; open session</>}
                 </button>
-
                 <button type="button" onClick={() => { setAuthStep("phone"); setApiError(""); setOtp(["","","","","",""]); }}
-                  style={{ width: "100%", background: "transparent", border: "none", fontSize: 14, color: "#696969", cursor: "pointer", fontFamily: "inherit" }}>
+                  style={{ background: "transparent", border: "none", fontSize: 14, color: "#696969", cursor: "pointer", fontFamily: "inherit" }}>
                   Didn&apos;t get the code? Go back
                 </button>
               </form>
             )}
 
-            {/* Progress dots */}
             <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 28 }}>
               {["phone", "otp"].map((s) => (
                 <div key={s} style={{ width: s === authStep ? 24 : 8, height: 8, borderRadius: 999, background: s === authStep ? "#141413" : "#D1CDC7", transition: "all 0.2s" }} />

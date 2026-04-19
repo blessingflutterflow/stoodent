@@ -3,7 +3,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { LiveblocksProvider, RoomProvider, useOthers, useSelf, ClientSideSuspense } from "@liveblocks/react";
 import {
@@ -22,6 +22,7 @@ interface SessionData {
   studentName: string;
   studentPhone: string;
   assignmentText: string;
+  fileUrl: string;
   status: "waiting" | "active" | "closed";
   createdAt: { seconds: number } | null;
 }
@@ -96,13 +97,22 @@ function ParticipantsPanel({ studentName }: { studentName: string }) {
 
 // ── Main session workspace ────────────────────────────────
 function SessionWorkspace({ session }: { session: SessionData }) {
+  const others = useOthers();
+
+  // Mark session active when tutor joins
+  useEffect(() => {
+    const tutorPresent = others.some((o) => (o.info as { role?: string })?.role === "tutor");
+    if (tutorPresent && session.status === "waiting") {
+      updateDoc(doc(db, "sessions", session.id), { status: "active", tutorJoined: true });
+    }
+  }, [others, session.id, session.status]);
+
   const statusCfg = {
     waiting: { label: "Waiting for tutor", dot: "#F37338", text: "#CF4500" },
     active: { label: "Active", dot: "#22c55e", text: "#16a34a" },
     closed: { label: "Closed", dot: "#696969", text: "#696969" },
   }[session.status];
 
-  const others = useOthers();
   const self = useSelf();
   const allUsers = [
     ...(self ? [{ id: self.id, color: (self.info as { color?: string })?.color ?? "#F37338", name: (self.info as { name?: string })?.name ?? "You" }] : []),
@@ -211,11 +221,17 @@ function SessionWorkspace({ session }: { session: SessionData }) {
               </div>
             </div>
 
-            {/* Assignment text preview if submitted */}
-            {session.assignmentText && (
+            {/* Assignment content */}
+            {(session.assignmentText || session.fileUrl) && (
               <div style={{ background: "#FCFBFA", borderRadius: 16, padding: "16px 20px", marginBottom: 32, border: "1px solid #E8E2DA" }}>
                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.4px", textTransform: "uppercase", color: "#696969", marginBottom: 8 }}>Assignment submitted</div>
-                <p style={{ fontSize: 14, color: "#141413", lineHeight: 1.6, margin: 0 }}>{session.assignmentText}</p>
+                {session.assignmentText && <p style={{ fontSize: 14, color: "#141413", lineHeight: 1.6, margin: 0, marginBottom: session.fileUrl ? 12 : 0 }}>{session.assignmentText}</p>}
+                {session.fileUrl && (
+                  <a href={session.fileUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#141413", color: "#F3F0EE", borderRadius: 999, padding: "7px 16px", fontSize: 13, fontWeight: 500, textDecoration: "none" }}>
+                    📎 View attached file
+                  </a>
+                )}
               </div>
             )}
 
@@ -299,6 +315,7 @@ export default function SessionClient({ id }: { id: string }) {
         studentName: d.studentName ?? "Student",
         studentPhone: d.studentPhone ?? "",
         assignmentText: d.assignmentText ?? "",
+        fileUrl: d.fileUrl ?? "",
         status: d.status ?? "waiting",
         createdAt: d.createdAt ?? null,
       });
