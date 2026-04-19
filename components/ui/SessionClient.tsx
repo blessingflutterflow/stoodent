@@ -285,6 +285,8 @@ function SessionWorkspace({ session }: { session: SessionData }) {
 export default function SessionClient({ id }: { id: string }) {
   const [session, setSession] = useState<SessionData | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const searchParams = useSearchParams();
+  const isTutor = searchParams.get("tutor") === "1";
 
   useEffect(() => {
     getDoc(doc(db, "sessions", id)).then((snap) => {
@@ -325,9 +327,6 @@ export default function SessionClient({ id }: { id: string }) {
       </div>
     );
   }
-
-  const searchParams = useSearchParams();
-  const isTutor = searchParams.get("tutor") === "1";
 
   return (
     <LiveblocksProvider
