@@ -8,7 +8,7 @@ export default async function SessionPage({
 }) {
   const { id } = await params;
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<></>}>
       <SessionClient id={id} />
     </Suspense>
   );
